@@ -1,28 +1,34 @@
-name: Zero Dollar Content Factory
+import os
+import requests
+import sys
 
-on:
-  schedule:
-    - cron: '0 8 * * *' # Runs at 8:00 AM UTC every day
-  workflow_dispatch: # Allows you to run it manually right now
+# 1. Get Secrets
+TOKEN = os.environ.get('TELEGRAM_TOKEN')
+CHAT_ID = os.environ.get('CHAT_ID')
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
+print(f"DEBUG: Checking Keys...")
+if not TOKEN:
+    print("❌ FAIL: Token is missing!")
+    sys.exit(1)
+if not CHAT_ID:
+    print("❌ FAIL: Chat ID is missing!")
+    sys.exit(1)
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
+print(f"DEBUG: Token found. Chat ID is: {CHAT_ID}")
 
-      - name: Install Libraries
-        run: |
-          pip install pandas wbgapi matplotlib seaborn requests openpyxl jinja2
+# 2. Force a Message (From USA Server)
+print("DEBUG: Sending message...")
+url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+params = {'chat_id': CHAT_ID, 'text': "🔔 TEST: Verification Successful! (Bypassed Pakistan Ban)"}
 
-      - name: Run The Bot
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
-        run: python daily_bot.py
+response = requests.post(url, params=params)
+
+print(f"DEBUG: Telegram replied with Code {response.status_code}")
+print(f"DEBUG: Telegram replied with Text: {response.text}")
+
+# 3. CRASH if not successful (This turns the checkmark RED)
+if response.status_code != 200:
+    print("❌ FAILURE: Message was rejected.")
+    sys.exit(1)
+else:
+    print("🎉 SUCCESS: Message accepted.")

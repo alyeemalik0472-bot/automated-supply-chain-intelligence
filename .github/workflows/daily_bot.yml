@@ -4,7 +4,8 @@ import wbgapi as wb
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-import random
+import requests
+import io
 from datetime import datetime
 from email.message import EmailMessage
 
@@ -12,64 +13,183 @@ from email.message import EmailMessage
 EMAIL_USER = os.environ.get('EMAIL_USER')
 EMAIL_PASS = os.environ.get('EMAIL_PASS')
 
-# --- DATA GENERATOR (Same as before) ---
-def get_supply_chain_chart():
-    print("Fetching Supply Chain Data...")
-    metrics = {
-        'LP.LPI.OVRL.XQ': {'title': "📦 Top Logistics Hubs (LPI Score)", 'xlabel': "Efficiency Score (1-5)"},
-        'IS.SHP.GOOD.TU': {'title': "🚢 Busiest Ports (Million TEU)", 'xlabel': "TEU"},
-        'NE.CON.PRVT.PC.KD': {'title': "🛍️ Top Consumer Markets", 'xlabel': "Spending Per Capita (USD)"}
+# --- THE INFOGRAPHIC ENGINE ---
+def generate_chart(df, title, source, filename):
+    try:
+        plt.style.use('dark_background')
+        fig, ax = plt.subplots(figsize=(9, 16))
+        
+        # Standardize Data
+        df = df.iloc[:10] # Top 10 only
+        # Normalize Column Names for plotting
+        x_col = df.columns[0] # Values
+        y_col = df.index.name if df.index.name else df.columns[1] # Countries
+        
+        # Plot
+        sns.barplot(x=df.iloc[:, 0], y=df.index, palette='viridis', ax=ax)
+        
+        # Styling
+        ax.set_title(f"{title}\n", fontsize=20, color='white', weight='bold', pad=20)
+        plt.text(0, 11, f"Source: {source} | {datetime.now().year}", color='#888888', fontsize=10)
+        
+        # Clean axes
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+        sns.despine(left=True, bottom=True)
+        
+        plt.savefig(filename, dpi=100, bbox_inches='tight', facecolor='black')
+        plt.close()
+        return filename
+    except Exception as e:
+        print(f"⚠️ Chart Error ({title}): {e}")
+        return None
+
+# --- CONNECTOR 1: WORLD BANK (The Reliable API) ---
+# Covers: GDP, Inflation, Population, Trade, Debt
+def fetch_world_bank():
+    indicators = {
+        'NY.GDP.MKTP.KD.ZG': '🚀 Top GDP Growth (%)',
+        'FP.CPI.TOTL.ZG': '💸 Highest Inflation Rates (%)',
+        'NE.TRD.GNFS.ZS': '🌍 Most Trade-Dependent Nations (% GDP)'
     }
-    code = random.choice(list(metrics.keys()))
-    info = metrics[code]
-    
-    df = wb.data.DataFrame(code, mrv=1, labels=True)
-    df = df.sort_values(by=df.columns[1], ascending=False).head(10)
-    if code == 'IS.SHP.GOOD.TU': df.iloc[:, 0] = df.iloc[:, 0] / 1000000 
-    
-    # Create Chart
-    plt.style.use('dark_background')
-    fig, ax = plt.subplots(figsize=(9, 16))
-    sns.barplot(x=df.iloc[:, 0], y=df.index, palette='viridis', ax=ax)
-    ax.set_title(f"{info['title']}\n", fontsize=24, color='white', weight='bold')
-    sns.despine(left=True, bottom=True)
-    
-    filename = "daily_post.png"
-    plt.savefig(filename, dpi=150, bbox_inches='tight', facecolor='black')
-    return filename, info['title']
+    charts = []
+    for code, title in indicators.items():
+        try:
+            df = wb.data.DataFrame(code, mrv=1, labels=True)
+            df = df.sort_values(by=df.columns[1], ascending=False)
+            filename = f"wb_{code}.png"
+            if generate_chart(df, title, "World Bank", filename):
+                charts.append(filename)
+        except:
+            pass
+    return charts
 
-# --- EMAIL SENDER (The New Part) ---
-def send_email(filename, subject):
-    print("Preparing Email...")
+# --- CONNECTOR 2: CSV FETCHERS (Our World in Data, Global Carbon) ---
+# Covers: CO2, Internet, Happiness
+def fetch_csv_sources():
+    sources = [
+        {
+            'url': "https://raw.githubusercontent.com/owid/co2-data/master/owid-co2-data.csv",
+            'title': "🏭 Top CO2 Emitters (Million Tonnes)",
+            'source': "Global Carbon Project",
+            'filter_col': 'year', 'filter_val': 2022, 'sort_col': 'co2', 'country_col': 'country'
+        },
+        {
+            'url': "https://raw.githubusercontent.com/owid/owid-datasets/master/datasets/Share%20of%20the%20population%20using%20the%20Internet/Share%20of%20the%20population%20using%20the%20Internet.csv",
+            'title': "🌐 Most Connected Populations",
+            'source': "Our World in Data",
+            'filter_col': 'Year', 'filter_val': 2020, 'sort_col': 'Share of the population using the Internet', 'country_col': 'Entity'
+        }
+    ]
     
+    charts = []
+    for i, s in enumerate(sources):
+        try:
+            df = pd.read_csv(s['url'])
+            # Filter by Year
+            if s['filter_val']:
+                df = df[df[s['filter_col']] == s['filter_val']]
+            
+            # Sort and Clean
+            df = df.sort_values(by=s['sort_col'], ascending=False).head(15)
+            # Remove "World" or Regions if they appear
+            df = df[~df[s['country_col']].isin(['World', 'Asia', 'Europe', 'High-income countries'])] 
+            
+            # Prepare for Plotter
+            df = df.set_index(s['country_col'])[[s['sort_col']]]
+            
+            filename = f"csv_{i}.png"
+            if generate_chart(df, s['title'], s['source'], filename):
+                charts.append(filename)
+        except Exception as e:
+            print(f"⚠️ CSV Error: {e}")
+    return charts
+
+# --- CONNECTOR 3: PANDAS HTML (The "Safe" Scraper) ---
+# Covers: Wikipedia Rankings (Good proxy for IMF/Worldometer lists)
+def fetch_html_tables():
+    charts = []
+    try:
+        # Example: Renewable Energy by Country
+        url = "https://en.wikipedia.org/wiki/List_of_countries_by_renewable_electricity_production"
+        dfs = pd.read_html(url) # Automatically finds tables
+        
+        # Usually the first or second table is the data
+        df = dfs[1].iloc[:, [0, 2]] # Col 0 is Country, Col 2 is % Renewable (example)
+        df.columns = ['Country', 'Value']
+        
+        # Clean Data (Remove % signs and convert to float)
+        df['Value'] = pd.to_numeric(df['Value'].astype(str).str.replace(r'[^\d.]', '', regex=True), errors='coerce')
+        df = df.dropna().sort_values('Value', ascending=False).head(10)
+        df = df.set_index('Country')
+        
+        filename = "wiki_renewables.png"
+        if generate_chart(df, "🌱 Top Green Energy Producers", "Wikipedia/IEA", filename):
+            charts.append(filename)
+    except Exception as e:
+        print(f"⚠️ HTML Error: {e}")
+    return charts
+
+# --- CONNECTOR 4: SIPRI (Excel Files) ---
+# Covers: Military Spending
+def fetch_excel_sipri():
+    charts = []
+    try:
+        url = "https://www.sipri.org/sites/default/files/SIPRI-Milex-data-1949-2024.xlsx"
+        r = requests.get(url)
+        with io.BytesIO(r.content) as f:
+            df = pd.read_excel(f, sheet_name="Current USD", skiprows=5)
+            
+        # Get latest year (last column)
+        latest_year = df.columns[-1]
+        df = df[['Country', latest_year]].dropna().sort_values(by=latest_year, ascending=False).head(10)
+        df = df.set_index('Country')
+        
+        filename = "sipri_military.png"
+        if generate_chart(df, f"🛡️ Top Military Budgets ({latest_year})", "SIPRI", filename):
+            charts.append(filename)
+    except Exception as e:
+        print(f"⚠️ SIPRI Error: {e}")
+    return charts
+
+# --- MASTER EMAILER ---
+def send_daily_briefing(attachments):
+    if not attachments:
+        print("❌ No charts generated today.")
+        return
+
     msg = EmailMessage()
-    msg['Subject'] = f"📊 Daily Update: {subject}"
+    msg['Subject'] = f"📊 Daily Data Briefing: {len(attachments)} Charts Ready"
     msg['From'] = EMAIL_USER
-    msg['To'] = EMAIL_USER # Sending to yourself
-    msg.set_content("Here is your automated Supply Chain Market Intelligence report.\n\nGenerated by Python on GitHub Actions.")
+    msg['To'] = EMAIL_USER
+    msg.set_content("Here are your generated infographics for today.\n\nPick the best 3 to post!")
 
-    # Attach the Image
-    with open(filename, 'rb') as f:
-        file_data = f.read()
-        file_name = f.name
-    msg.add_attachment(file_data, maintype='image', subtype='png', filename=file_name)
+    for file in attachments:
+        with open(file, 'rb') as f:
+            file_data = f.read()
+            file_name = f.name
+        msg.add_attachment(file_data, maintype='image', subtype='png', filename=file_name)
 
-    # Send via Gmail
-    try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-            smtp.login(EMAIL_USER, EMAIL_PASS)
-            smtp.send_message(msg)
-        print("🎉 SUCCESS: Email sent successfully!")
-    except Exception as e:
-        print(f"❌ FAIL: Could not send email. Error: {e}")
-        raise e
+    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+        smtp.login(EMAIL_USER, EMAIL_PASS)
+        smtp.send_message(msg)
+    print("🎉 Daily Briefing Sent!")
 
-# --- MAIN CONTROLLER ---
+# --- EXECUTION ---
 if __name__ == "__main__":
-    try:
-        image_file, title = get_supply_chain_chart()
-        send_email(image_file, title)
-    except Exception as e:
-        print(f"Workflow Failed: {e}")
-        # This exit code ensures GitHub shows a Red X if it fails
-        exit(1)
+    all_charts = []
+    
+    print("1. Fetching World Bank...")
+    all_charts.extend(fetch_world_bank())
+    
+    print("2. Fetching CSV Sources...")
+    all_charts.extend(fetch_csv_sources())
+    
+    print("3. Fetching Wikipedia Data...")
+    all_charts.extend(fetch_html_tables())
+    
+    print("4. Fetching SIPRI Data...")
+    all_charts.extend(fetch_excel_sipri())
+    
+    print(f"Done! Generated {len(all_charts)} charts. Sending Email...")
+    send_daily_briefing(all_charts)

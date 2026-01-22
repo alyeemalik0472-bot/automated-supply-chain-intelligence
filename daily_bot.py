@@ -46,63 +46,45 @@ def generate_chart(df, title, source, filename):
 
 # --- SOURCE 1: WORLD BANK (The Powerhouse) ---
 # Covers Economy, Trade, Supply Chain, Social
+# --- SOURCE 1: WORLD BANK (Professional Edition) ---
+# --- SOURCE 1: WORLD BANK (Professional Edition) ---
 def fetch_world_bank():
     print("--- Fetching World Bank Indicators ---")
-    # Dictionary of "Recruiter Friendly" metrics
     indicators = {
-        'NY.GDP.MKTP.KD.ZG': '🚀 Top GDP Growth (%)',
-        'FP.CPI.TOTL.ZG': '💸 Highest Inflation (%)',
-        'NE.TRD.GNFS.ZS': '🌍 Most Trade-Dependent (% GDP)',
-        'LP.LPI.OVRL.XQ': '📦 Top Logistics Hubs (LPI)', 
-        'IS.SHP.GOOD.TU': '🚢 Busiest Port Traffic (TEU)',
-        'SL.UEM.TOTL.ZS': '📉 Unemployment Rate (%)',
-        'EN.ATM.CO2E.PC': '🏭 CO2 Emissions Per Capita',
-        'IT.NET.USER.ZS': '💻 Internet Penetration (%)'
+        'NY.GDP.MKTP.KD.ZG': 'Top GDP Growth (%)',
+        'FP.CPI.TOTL.ZG': 'Highest Inflation Rates (%)',
+        'NE.TRD.GNFS.ZS': 'Most Trade-Dependent Economies (% GDP)',
+        'LP.LPI.OVRL.XQ': 'Top Logistics Hubs (LPI Score)', 
+        'IS.SHP.GOOD.TU': 'Busiest Port Traffic (Million TEU)',
+        'SL.UEM.TOTL.ZS': 'Unemployment Rate (%)',
+        'EN.ATM.CO2E.PC': 'CO2 Emissions Per Capita',
+        'IT.NET.USER.ZS': 'Internet Penetration (%)'
     }
     
     charts = []
     for code, title in indicators.items():
         try:
-            # Fetch data (mrv=1 gets latest available year)
+            # Fetch data
             df = wb.data.DataFrame(code, mrv=1, labels=True)
             
-            # Sort Logic (Descending usually, Ascending for Unemployment)
+            # Sort Logic
             ascending = True if "Unemployment" in title else False
             df = df.sort_values(by=df.columns[1], ascending=ascending)
             
-            # Special Handling for huge numbers (Port Traffic)
+            # Unit Conversions
             if 'TEU' in title:
-                df.iloc[:, 0] = df.iloc[:, 0] / 1000000  # Convert to Millions
+                df.iloc[:, 0] = df.iloc[:, 0] / 1000000
+            
+            # Clean Index (Change 'SGP' to 'Singapore' if possible, or just keep codes)
+            # This version keeps it simple to avoid crashes
             
             filename = f"wb_{code}.png"
+            # Note: We removed the emoji from the title below
             if generate_chart(df, title, "World Bank Open Data", filename):
                 charts.append(filename)
         except Exception as e:
             print(f"Failed {code}: {e}")
     return charts
-
-# --- SOURCE 2: WIKIPEDIA (Energy Rankings) ---
-def fetch_wiki_energy():
-    print("--- Fetching Energy Data ---")
-    charts = []
-    try:
-        url = "https://en.wikipedia.org/wiki/List_of_countries_by_renewable_electricity_production"
-        dfs = pd.read_html(url)
-        # Table 1 is usually the data. Columns: Country(0), % Renewable(2)
-        df = dfs[1].iloc[:, [0, 2]]
-        df.columns = ['Country', 'Value']
-        
-        # Clean % symbols and convert to numbers
-        df['Value'] = pd.to_numeric(df['Value'].astype(str).str.replace(r'[^\d.]', '', regex=True), errors='coerce')
-        df = df.dropna().sort_values('Value', ascending=False).set_index('Country')
-        
-        filename = "wiki_energy.png"
-        if generate_chart(df, "🌱 Top Green Energy Producers", "Wikipedia/IEA", filename):
-            charts.append(filename)
-    except Exception as e:
-        print(f"Wiki Error: {e}")
-    return charts
-
 # --- SOURCE 3: SIPRI (Military Excel) ---
 def fetch_sipri_military():
     print("--- Fetching Military Data ---")

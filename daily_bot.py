@@ -25,6 +25,7 @@ def generate_chart(df, title, source, filename):
         
         # Color Logic: Green for positive, Red for negative (Stocks only)
         if "Change" in title:
+            # Create a color list based on values
             colors = ['#00ff00' if x >= 0 else '#ff0000' for x in df.iloc[:, 0]]
             sns.barplot(x=df.iloc[:, 0], y=df.index, palette=colors, ax=ax)
         else:

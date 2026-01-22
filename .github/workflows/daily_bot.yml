@@ -1,9 +1,10 @@
+
 name: Mega Bot Daily Run
 
 on:
   schedule:
     - cron: '0 8 * * *' # Runs at 8:00 AM UTC
-  workflow_dispatch: # Allows manual button click
+  workflow_dispatch: # Allows manual run
 
 jobs:
   build:

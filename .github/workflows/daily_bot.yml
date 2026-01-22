@@ -18,7 +18,7 @@ jobs:
           python-version: '3.9'
 
       - name: Install Libraries
-        run: pip install pandas wbgapi matplotlib seaborn requests lxml openpyxl
+        run: pip install pandas wbgapi matplotlib seaborn requests lxml openpyxl yfinance
 
       - name: Run The Bot
         env:

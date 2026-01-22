@@ -4,7 +4,8 @@ import wbgapi as wb
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-import random
+import requests
+import io
 from datetime import datetime
 from email.message import EmailMessage
 
@@ -12,64 +13,143 @@ from email.message import EmailMessage
 EMAIL_USER = os.environ.get('EMAIL_USER')
 EMAIL_PASS = os.environ.get('EMAIL_PASS')
 
-# --- DATA GENERATOR (Same as before) ---
-def get_supply_chain_chart():
-    print("Fetching Supply Chain Data...")
-    metrics = {
-        'LP.LPI.OVRL.XQ': {'title': "📦 Top Logistics Hubs (LPI Score)", 'xlabel': "Efficiency Score (1-5)"},
-        'IS.SHP.GOOD.TU': {'title': "🚢 Busiest Ports (Million TEU)", 'xlabel': "TEU"},
-        'NE.CON.PRVT.PC.KD': {'title': "🛍️ Top Consumer Markets", 'xlabel': "Spending Per Capita (USD)"}
+# --- THE CHART DESIGNER ---
+def generate_chart(df, title, source, filename):
+    try:
+        plt.style.use('dark_background')
+        fig, ax = plt.subplots(figsize=(10, 14)) # Taller for mobile
+        
+        # Standardize: Top 12 values
+        df = df.iloc[:12]
+        
+        # Plot: Horizontal Bars (Easier to read)
+        # We assume Col 0 is Data, Index is Country
+        sns.barplot(x=df.iloc[:, 0], y=df.index, palette='viridis', ax=ax)
+        
+        # Typography
+        ax.set_title(f"{title}\n", fontsize=22, color='white', weight='bold', pad=20)
+        plt.text(0, len(df)+1, f"Source: {source} | Generated: {datetime.now().strftime('%Y-%m-%d')}", color='#888888', fontsize=10)
+        
+        # Clean up
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+        sns.despine(left=True, bottom=True)
+        ax.tick_params(axis='y', labelsize=12)
+        
+        plt.savefig(filename, dpi=100, bbox_inches='tight', facecolor='black')
+        plt.close()
+        print(f"✅ Created: {filename}")
+        return filename
+    except Exception as e:
+        print(f"⚠️ Skip ({title}): {e}")
+        return None
+
+# --- SOURCE 1: WORLD BANK (The Powerhouse) ---
+# Covers Economy, Trade, Supply Chain, Social
+def fetch_world_bank():
+    print("--- Fetching World Bank Indicators ---")
+    # Dictionary of "Recruiter Friendly" metrics
+    indicators = {
+        'NY.GDP.MKTP.KD.ZG': '🚀 Top GDP Growth (%)',
+        'FP.CPI.TOTL.ZG': '💸 Highest Inflation (%)',
+        'NE.TRD.GNFS.ZS': '🌍 Most Trade-Dependent (% GDP)',
+        'LP.LPI.OVRL.XQ': '📦 Top Logistics Hubs (LPI)', 
+        'IS.SHP.GOOD.TU': '🚢 Busiest Port Traffic (TEU)',
+        'SL.UEM.TOTL.ZS': '📉 Unemployment Rate (%)',
+        'EN.ATM.CO2E.PC': '🏭 CO2 Emissions Per Capita',
+        'IT.NET.USER.ZS': '💻 Internet Penetration (%)'
     }
-    code = random.choice(list(metrics.keys()))
-    info = metrics[code]
     
-    df = wb.data.DataFrame(code, mrv=1, labels=True)
-    df = df.sort_values(by=df.columns[1], ascending=False).head(10)
-    if code == 'IS.SHP.GOOD.TU': df.iloc[:, 0] = df.iloc[:, 0] / 1000000 
-    
-    # Create Chart
-    plt.style.use('dark_background')
-    fig, ax = plt.subplots(figsize=(9, 16))
-    sns.barplot(x=df.iloc[:, 0], y=df.index, palette='viridis', ax=ax)
-    ax.set_title(f"{info['title']}\n", fontsize=24, color='white', weight='bold')
-    sns.despine(left=True, bottom=True)
-    
-    filename = "daily_post.png"
-    plt.savefig(filename, dpi=150, bbox_inches='tight', facecolor='black')
-    return filename, info['title']
+    charts = []
+    for code, title in indicators.items():
+        try:
+            # Fetch data (mrv=1 gets latest available year)
+            df = wb.data.DataFrame(code, mrv=1, labels=True)
+            
+            # Sort Logic (Descending usually, Ascending for Unemployment)
+            ascending = True if "Unemployment" in title else False
+            df = df.sort_values(by=df.columns[1], ascending=ascending)
+            
+            # Special Handling for huge numbers (Port Traffic)
+            if 'TEU' in title:
+                df.iloc[:, 0] = df.iloc[:, 0] / 1000000  # Convert to Millions
+            
+            filename = f"wb_{code}.png"
+            if generate_chart(df, title, "World Bank Open Data", filename):
+                charts.append(filename)
+        except Exception as e:
+            print(f"Failed {code}: {e}")
+    return charts
 
-# --- EMAIL SENDER (The New Part) ---
-def send_email(filename, subject):
-    print("Preparing Email...")
-    
+# --- SOURCE 2: WIKIPEDIA (Energy Rankings) ---
+def fetch_wiki_energy():
+    print("--- Fetching Energy Data ---")
+    charts = []
+    try:
+        url = "https://en.wikipedia.org/wiki/List_of_countries_by_renewable_electricity_production"
+        dfs = pd.read_html(url)
+        # Table 1 is usually the data. Columns: Country(0), % Renewable(2)
+        df = dfs[1].iloc[:, [0, 2]]
+        df.columns = ['Country', 'Value']
+        
+        # Clean % symbols and convert to numbers
+        df['Value'] = pd.to_numeric(df['Value'].astype(str).str.replace(r'[^\d.]', '', regex=True), errors='coerce')
+        df = df.dropna().sort_values('Value', ascending=False).set_index('Country')
+        
+        filename = "wiki_energy.png"
+        if generate_chart(df, "🌱 Top Green Energy Producers", "Wikipedia/IEA", filename):
+            charts.append(filename)
+    except Exception as e:
+        print(f"Wiki Error: {e}")
+    return charts
+
+# --- SOURCE 3: SIPRI (Military Excel) ---
+def fetch_sipri_military():
+    print("--- Fetching Military Data ---")
+    charts = []
+    try:
+        url = "https://www.sipri.org/sites/default/files/SIPRI-Milex-data-1949-2024.xlsx"
+        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with io.BytesIO(r.content) as f:
+            df = pd.read_excel(f, sheet_name="Current USD", skiprows=5)
+            
+        latest_year = df.columns[-1]
+        df = df[['Country', latest_year]].dropna().sort_values(by=latest_year, ascending=False).set_index('Country')
+        
+        filename = "sipri_defense.png"
+        if generate_chart(df, f"🛡️ Top Military Budgets ({latest_year})", "SIPRI", filename):
+            charts.append(filename)
+    except Exception as e:
+        print(f"SIPRI Error: {e}")
+    return charts
+
+# --- EMAILER ---
+def send_email(attachments):
+    if not attachments:
+        print("❌ No charts generated.")
+        return
+
+    print(f"📧 Sending {len(attachments)} charts...")
     msg = EmailMessage()
-    msg['Subject'] = f"📊 Daily Update: {subject}"
+    msg['Subject'] = f"📊 Daily Intelligence: {len(attachments)} Charts Ready"
     msg['From'] = EMAIL_USER
-    msg['To'] = EMAIL_USER # Sending to yourself
-    msg.set_content("Here is your automated Supply Chain Market Intelligence report.\n\nGenerated by Python on GitHub Actions.")
+    msg['To'] = EMAIL_USER
+    msg.set_content("Here is your daily automated market intelligence briefing.\n\nGenerated by Python via GitHub Actions.")
 
-    # Attach the Image
-    with open(filename, 'rb') as f:
-        file_data = f.read()
-        file_name = f.name
-    msg.add_attachment(file_data, maintype='image', subtype='png', filename=file_name)
+    for file in attachments:
+        with open(file, 'rb') as f:
+            msg.add_attachment(f.read(), maintype='image', subtype='png', filename=file)
 
-    # Send via Gmail
-    try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-            smtp.login(EMAIL_USER, EMAIL_PASS)
-            smtp.send_message(msg)
-        print("🎉 SUCCESS: Email sent successfully!")
-    except Exception as e:
-        print(f"❌ FAIL: Could not send email. Error: {e}")
-        raise e
+    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+        smtp.login(EMAIL_USER, EMAIL_PASS)
+        smtp.send_message(msg)
+    print("🎉 Email Sent!")
 
-# --- MAIN CONTROLLER ---
+# --- MAIN RUN ---
 if __name__ == "__main__":
-    try:
-        image_file, title = get_supply_chain_chart()
-        send_email(image_file, title)
-    except Exception as e:
-        print(f"Workflow Failed: {e}")
-        # This exit code ensures GitHub shows a Red X if it fails
-        exit(1)
+    all_files = []
+    all_files.extend(fetch_world_bank())     # Covers 8 topics
+    all_files.extend(fetch_wiki_energy())    # Covers Energy
+    all_files.extend(fetch_sipri_military()) # Covers Defense
+    
+    send_email(all_files)
